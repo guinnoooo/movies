@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Movie Vector Map</title>
 <style>
   :root {
@@ -13,7 +13,7 @@
   html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg);
     color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
   #app { position: fixed; inset: 0; }
-  canvas { display: block; cursor: grab; }
+  canvas { display: block; cursor: grab; touch-action: none; }
   canvas.dragging { cursor: grabbing; }
 
   #loading { position: fixed; inset: 0; display: flex; align-items: center;
@@ -132,6 +132,23 @@
   #counter { color: var(--muted); font-size: 12px; padding: 2px 2px; }
   #hint { position: fixed; left: 14px; bottom: 12px; z-index: 20; color: var(--muted);
     font-size: 11.5px; line-height: 1.6; pointer-events: none; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
+  /* mobile layout */
+  @media (max-width: 640px) {
+    #detail { width: 100%; max-width: 100%; height: 55%;
+      border-right: none; border-bottom: 1px solid var(--panel-line);
+      transform: translateY(-100%); }
+    #detail.open { transform: translateY(0); }
+    #detail .d-poster, #detail .d-noposter { aspect-ratio: auto; height: 150px; }
+    #panel { width: 100%; max-width: 100%;
+      height: 45%; top: auto; bottom: 0; border-left: none;
+      border-top: 1px solid var(--panel-line);
+      transform: translateY(100%); }
+    #panel.open { transform: translateY(0); }
+    #controls { width: calc(100% - 28px); }
+    #controls.shifted { transform: none; }
+    #hint { display: none; }
+    #panel .p-list-title { padding: 10px 18px 4px; }
+  }
 </style>
 </head>
 <body>
@@ -313,25 +330,14 @@ function draw(){
 function drawClusterLabels(){
   if(!clusterLabels.length || !SHOW_LABELS) return;
   ctx.textAlign="center"; ctx.textBaseline="middle";
-  // global fade: labels are an overview aid, fade as you zoom deep in
-  let gAlpha = 1;
-  if(view.scale > 6) gAlpha = Math.max(0, 1 - (view.scale-6)/8);
-  if(highlighted!==null) gAlpha *= 0.3;
-  if(gAlpha <= 0.02) return;
-
-  // how many labels to show scales gently with zoom: fewer when far out,
-  // more (smaller clusters revealed) as you zoom in — but capped.
-  const shown = Math.min(clusterLabels.length,
-                         Math.round(LABEL_BASE_COUNT + view.scale * 3));
-
-  for(let n=0; n<shown; n++){
-    const l = clusterLabels[n];              // sorted largest-first
+  // TEMP TROUBLESHOOTING: show every label, no fade, no count cap
+  for(let n=0; n<clusterLabels.length; n++){
+    const l = clusterLabels[n];
     const px=wx(l.x), py=wy(l.y);
-    if(px<40||px>W-40||py<20||py>H-20) continue;
     const fs = Math.min(21, Math.max(11, 9 + l.size/320));
     ctx.font = `600 ${fs}px -apple-system, "Segoe UI", sans-serif`;
-    ctx.lineWidth = 3; ctx.strokeStyle = `rgba(6,7,10,${0.9*gAlpha})`;
-    ctx.fillStyle = `rgba(255,255,255,${0.94*gAlpha})`;
+    ctx.lineWidth = 3; ctx.strokeStyle = "rgba(6,7,10,0.9)";
+    ctx.fillStyle = "rgba(255,255,255,0.94)";
     ctx.strokeText(l.name, px, py); ctx.fillText(l.name, px, py);
   }
 }
@@ -377,6 +383,53 @@ function onWheel(e){
   const mx=e.clientX, my=e.clientY; const bx=sx(mx), by=sy(my);
   view.scale*=f; view.scale=Math.max(0.05,Math.min(view.scale,200));
   view.x=mx-bx*view.scale; view.y=my-by*view.scale; draw();
+}
+
+// ---------- touch (mobile) ----------
+let touchMode=null;          // 'pan' | 'pinch'
+let tStartX=0, tStartY=0, tMoved=false, pinchDist=0;
+function dist(t1,t2){ const dx=t1.clientX-t2.clientX, dy=t1.clientY-t2.clientY; return Math.hypot(dx,dy); }
+function mid(t1,t2){ return {x:(t1.clientX+t2.clientX)/2, y:(t1.clientY+t2.clientY)/2}; }
+
+function onTouchStart(e){
+  document.getElementById("tooltip").style.display="none";  // no hover on touch
+  if(e.touches.length===1){
+    touchMode="pan"; tMoved=false;
+    lastX=e.touches[0].clientX; lastY=e.touches[0].clientY;
+    tStartX=lastX; tStartY=lastY;
+  } else if(e.touches.length===2){
+    touchMode="pinch";
+    pinchDist=dist(e.touches[0],e.touches[1]);
+  }
+}
+function onTouchMove(e){
+  e.preventDefault();
+  if(touchMode==="pan" && e.touches.length===1){
+    const t=e.touches[0];
+    const dx=t.clientX-lastX, dy=t.clientY-lastY;
+    if(Math.abs(t.clientX-tStartX)+Math.abs(t.clientY-tStartY)>6) tMoved=true;
+    view.x+=dx; view.y+=dy; lastX=t.clientX; lastY=t.clientY; draw();
+  } else if(touchMode==="pinch" && e.touches.length===2){
+    const nd=dist(e.touches[0],e.touches[1]);
+    const m=mid(e.touches[0],e.touches[1]);
+    const f=nd/(pinchDist||nd);
+    const bx=sx(m.x), by=sy(m.y);
+    view.scale*=f; view.scale=Math.max(0.05,Math.min(view.scale,200));
+    view.x=m.x-bx*view.scale; view.y=m.y-by*view.scale;
+    pinchDist=nd; draw();
+  }
+}
+function onTouchEnd(e){
+  if(touchMode==="pan" && !tMoved){
+    // treat as tap -> select
+    const idx=pick(tStartX,tStartY);
+    if(idx>=0) selectFilm(idx);
+  }
+  if(e.touches.length===0) touchMode=null;
+  else if(e.touches.length===1){   // lifted one finger after pinch -> resume pan
+    touchMode="pan"; tMoved=true;
+    lastX=e.touches[0].clientX; lastY=e.touches[0].clientY;
+  }
 }
 
 // ---------- select / panels ----------
@@ -607,6 +660,10 @@ addEventListener("load",()=>{
   addEventListener("mousemove",onMove);
   addEventListener("mouseup",onUp);
   cv.addEventListener("wheel",onWheel,{passive:false});
+  cv.addEventListener("touchstart",onTouchStart,{passive:false});
+  cv.addEventListener("touchmove",onTouchMove,{passive:false});
+  cv.addEventListener("touchend",onTouchEnd,{passive:false});
+  cv.addEventListener("touchcancel",onTouchEnd,{passive:false});
   document.getElementById("dclose").addEventListener("click",closePanels);
 
   const s=document.getElementById("search");
